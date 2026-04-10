@@ -1,3 +1,4 @@
+pub mod app;
 pub mod renderer;
 
 fn main() {
