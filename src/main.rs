@@ -1,6 +1,7 @@
 use winit::event_loop::EventLoop;
 
 pub mod app;
+pub mod camera;
 pub mod renderer;
 
 fn main() {
