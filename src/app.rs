@@ -3,7 +3,8 @@ use std::{sync::Arc, time::Instant};
 use wgpu::{CommandEncoderDescriptor, Instance, InstanceDescriptor};
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
+    keyboard::{KeyCode, PhysicalKey},
     window::Window,
 };
 
@@ -12,6 +13,7 @@ use crate::{
     renderer::{
         context::GpuContext,
         particle_system::{CameraUniforms, ParticleSystem},
+        streamlines::StreamlineSystem,
     },
 };
 
@@ -23,6 +25,7 @@ struct AppState {
     window: Arc<Window>,
     ctx: GpuContext,
     particle_system: ParticleSystem,
+    streamlines: StreamlineSystem,
     camera: OrbitCamera,
     last_frame: Instant,
     elapsed: f32,
@@ -51,6 +54,13 @@ impl ApplicationHandler for App {
 
         let particle_system = ParticleSystem::new(&ctx.device, ctx.surface_config.format);
 
+        let streamlines = StreamlineSystem::new(
+            &ctx.device,
+            &ctx.queue,
+            ctx.surface_config.format,
+            particle_system.camera_buf(),
+        );
+
         let size = window.inner_size();
         let camera = OrbitCamera::new(size.width as f32 / size.height.max(1) as f32);
 
@@ -58,6 +68,7 @@ impl ApplicationHandler for App {
             window,
             ctx,
             particle_system,
+            streamlines,
             camera,
             last_frame: Instant::now(),
             elapsed: 0.0,
@@ -84,6 +95,25 @@ impl ApplicationHandler for App {
                 s.camera.resize(size.width, size.height);
                 s.window.request_redraw();
             }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(key),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => match key {
+                KeyCode::Escape => event_loop.exit(),
+
+                KeyCode::KeyS => {
+                    s.streamlines.visible = !s.streamlines.visible;
+                    let label = if s.streamlines.visible { "ON" } else { "OFF" };
+                    log::info!("Streamlines: {label}");
+                }
+
+                _ => {}
+            },
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,

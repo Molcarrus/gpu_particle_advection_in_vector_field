@@ -388,6 +388,10 @@ impl ParticleSystem {
 
         [make(0), make(1)]
     }
+
+    pub fn camera_buf(&self) -> &Buffer {
+        &self.camera_uniform_buf
+    }
 }
 
 #[cfg(test)]
