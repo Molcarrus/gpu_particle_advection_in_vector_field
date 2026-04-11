@@ -12,7 +12,6 @@ struct SimUniforms {
     bbox_half: f32,
     seed: u32,
     use_texture: u32,
-    _pad0: u32,
     _pad1: u32,
     _pad2: u32,
 }
@@ -42,7 +41,7 @@ fn world_to_uvw(p: vec3<f32>) -> vec3<f32> {
 
 fn field_texture(p: vec3<f32>) -> vec3<f32> {
     let uvw = world_to_uvw(p);
-    let sample = textureSample(field_tex, field_smp, uvw);
+    let sample = textureSampleLevel(field_tex, field_smp, uvw, 0.0);
     return sample.xyz;
 }
 

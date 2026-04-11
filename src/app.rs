@@ -31,6 +31,7 @@ struct AppState {
     elapsed: f32,
     mouse_pressed: bool,
     last_mouse: Option<(f32, f32)>,
+    field_texture_timer: f32,
 }
 
 impl App {
@@ -52,7 +53,7 @@ impl ApplicationHandler for App {
         );
         let ctx = pollster::block_on(GpuContext::new(window.clone()));
 
-        let particle_system = ParticleSystem::new(&ctx.device, ctx.surface_config.format);
+        let particle_system = ParticleSystem::new(&ctx.device, &ctx.queue, ctx.surface_config.format);
 
         let streamlines = StreamlineSystem::new(
             &ctx.device,
@@ -74,6 +75,7 @@ impl ApplicationHandler for App {
             elapsed: 0.0,
             mouse_pressed: false,
             last_mouse: None,
+            field_texture_timer: 0.0,
         });
     }
 
@@ -111,6 +113,12 @@ impl ApplicationHandler for App {
                     let label = if s.streamlines.visible { "ON" } else { "OFF" };
                     log::info!("Streamlines: {label}");
                 }
+                
+                KeyCode::KeyT => {
+                    s.particle_system.toggle_field_mode();
+                    s.particle_system.refresh_field_textures(&s.ctx.queue, s.elapsed);
+                    s.field_texture_timer = 0.0
+                }
 
                 _ => {}
             },
@@ -145,6 +153,12 @@ impl ApplicationHandler for App {
                 let dt = now.duration_since(s.last_frame).as_secs_f32().min(0.05);
                 s.last_frame = now;
                 s.elapsed += dt;
+                
+                s.field_texture_timer += dt;
+                if s.field_texture_timer >= 0.5 {
+                    s.particle_system.refresh_field_textures(&s.ctx.queue, s.elapsed);
+                    s.field_texture_timer = 0.0;
+                }
 
                 let frame = match s.ctx.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(texture) => texture,
@@ -246,9 +260,9 @@ impl ApplicationHandler for App {
 
     fn device_event(
         &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        device_id: winit::event::DeviceId,
-        event: winit::event::DeviceEvent,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        _event: winit::event::DeviceEvent,
     ) {
     }
 }
