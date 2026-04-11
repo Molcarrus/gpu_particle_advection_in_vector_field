@@ -428,7 +428,10 @@ mod tests {
 
     #[test]
     fn stream_vert_is_pod() {
-        let sv = StreamVert { position: [1.0, 2.0, 3.0], t: 0.5 };
+        let sv = StreamVert {
+            position: [1.0, 2.0, 3.0],
+            t: 0.5,
+        };
         let bytes = bytemuck::bytes_of(&sv);
         assert_eq!(bytes.len(), 16);
     }
@@ -473,7 +476,7 @@ mod tests {
         for s in 0..n_seeds {
             let last_valid_in_streamline = (s + 1) * n_steps - 1;
             let seg_start = s as usize * (n_steps as usize - 1) * 2;
-            let seg_end   = seg_start + (n_steps as usize - 1) * 2;
+            let seg_end = seg_start + (n_steps as usize - 1) * 2;
 
             for &idx in &indices[seg_start..seg_end] {
                 assert!(
@@ -498,7 +501,7 @@ mod tests {
 
     #[test]
     fn seeds_within_bounding_box() {
-        let bbox  = 15.0f32;
+        let bbox = 15.0f32;
         let seeds = StreamlineSystem::generate_seeds(N_SEEDS, bbox);
         let limit = bbox * 1.2;
         for (i, seed) in seeds.iter().enumerate() {

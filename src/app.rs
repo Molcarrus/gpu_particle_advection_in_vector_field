@@ -198,7 +198,7 @@ impl ApplicationHandler for App {
                     s.elapsed,
                     camera_uniforms,
                 );
-                
+
                 s.streamlines.update(&s.ctx.queue, &mut encoder, s.elapsed);
 
                 {

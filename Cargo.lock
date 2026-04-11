@@ -691,6 +691,7 @@ dependencies = [
  "bytemuck",
  "env_logger",
  "glam",
+ "half",
  "log",
  "pollster",
  "rand 0.10.0",
