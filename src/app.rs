@@ -198,6 +198,8 @@ impl ApplicationHandler for App {
                     s.elapsed,
                     camera_uniforms,
                 );
+                
+                s.streamlines.update(&s.ctx.queue, &mut encoder, s.elapsed);
 
                 {
                     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -230,6 +232,7 @@ impl ApplicationHandler for App {
                     });
 
                     s.particle_system.render(&mut rpass);
+                    s.streamlines.render(&mut rpass);
                 }
 
                 s.ctx.queue.submit(std::iter::once(encoder.finish()));

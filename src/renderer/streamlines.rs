@@ -383,8 +383,8 @@ impl StreamlineSystem {
             },
             depth_stencil: Some(DepthStencilState {
                 format: TextureFormat::Depth32Float,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(CompareFunction::Less),
+                depth_write_enabled: Some(false),
+                depth_compare: Some(CompareFunction::Always),
                 stencil: StencilState::default(),
                 bias: DepthBiasState::default(),
             }),
@@ -409,5 +409,148 @@ impl StreamlineSystem {
             multiview_mask: None,
             cache: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streamline_uniforms_size_is_32_bytes() {
+        assert_eq!(std::mem::size_of::<StreamlineUniforms>(), 32);
+    }
+
+    #[test]
+    fn stream_vert_size_is_16_bytes() {
+        assert_eq!(std::mem::size_of::<StreamVert>(), 16);
+    }
+
+    #[test]
+    fn stream_vert_is_pod() {
+        let sv = StreamVert { position: [1.0, 2.0, 3.0], t: 0.5 };
+        let bytes = bytemuck::bytes_of(&sv);
+        assert_eq!(bytes.len(), 16);
+    }
+
+    #[test]
+    fn index_buffer_length_is_correct() {
+        let indices = StreamlineSystem::build_index_buffer(N_SEEDS, N_STEPS);
+        let expected = N_SEEDS as usize * (N_STEPS as usize - 1) * 2;
+        assert_eq!(indices.len(), expected);
+    }
+
+    #[test]
+    fn index_buffer_first_streamline_is_sequential() {
+        let indices = StreamlineSystem::build_index_buffer(4, 4);
+        assert_eq!(&indices[..6], &[0, 1, 1, 2, 2, 3]);
+    }
+
+    #[test]
+    fn index_buffer_second_streamline_starts_at_n_steps() {
+        let indices = StreamlineSystem::build_index_buffer(4, 4);
+        assert_eq!(&indices[6..12], &[4, 5, 5, 6, 6, 7]);
+    }
+
+    #[test]
+    fn index_buffer_no_index_exceeds_total_verts() {
+        let indices = StreamlineSystem::build_index_buffer(N_SEEDS, N_STEPS);
+        let max_valid = (N_SEEDS * N_STEPS - 1) as u32;
+        for &idx in &indices {
+            assert!(
+                idx <= max_valid,
+                "index {idx} exceeds total vertex count {max_valid}"
+            );
+        }
+    }
+
+    #[test]
+    fn index_buffer_no_cross_streamline_segments() {
+        let n_seeds = 8u32;
+        let n_steps = 16u32;
+        let indices = StreamlineSystem::build_index_buffer(n_seeds, n_steps);
+
+        for s in 0..n_seeds {
+            let last_valid_in_streamline = (s + 1) * n_steps - 1;
+            let seg_start = s as usize * (n_steps as usize - 1) * 2;
+            let seg_end   = seg_start + (n_steps as usize - 1) * 2;
+
+            for &idx in &indices[seg_start..seg_end] {
+                assert!(
+                    idx >= s * n_steps && idx <= last_valid_in_streamline,
+                    "index {idx} crosses streamline boundary for streamline {s}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn index_count_matches_draw_call_expectation() {
+        let indices = StreamlineSystem::build_index_buffer(N_SEEDS, N_STEPS);
+        assert_eq!(indices.len() % 2, 0, "LineList needs even index count");
+    }
+
+    #[test]
+    fn seeds_count_is_exactly_n() {
+        let seeds = StreamlineSystem::generate_seeds(N_SEEDS, 15.0);
+        assert_eq!(seeds.len(), N_SEEDS as usize);
+    }
+
+    #[test]
+    fn seeds_within_bounding_box() {
+        let bbox  = 15.0f32;
+        let seeds = StreamlineSystem::generate_seeds(N_SEEDS, bbox);
+        let limit = bbox * 1.2;
+        for (i, seed) in seeds.iter().enumerate() {
+            for &coord in &seed[..3] {
+                assert!(
+                    coord.abs() <= limit,
+                    "seed {i} coordinate {coord} exceeds limit {limit}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn seeds_w_component_is_zero() {
+        let seeds = StreamlineSystem::generate_seeds(32, 15.0);
+        for (i, seed) in seeds.iter().enumerate() {
+            assert_eq!(seed[3], 0.0, "seed {i} w component should be 0.0");
+        }
+    }
+
+    #[test]
+    fn seeds_are_not_all_identical() {
+        let seeds = StreamlineSystem::generate_seeds(N_SEEDS, 15.0);
+        // At least two seeds should differ — rules out a broken RNG
+        let first = seeds[0];
+        let all_same = seeds.iter().all(|s| s == &first);
+        assert!(!all_same, "all seeds are identical — RNG may be broken");
+    }
+
+    #[test]
+    fn total_verts_fits_in_u32() {
+        let total = N_SEEDS as u64 * N_STEPS as u64;
+        assert!(
+            total <= u32::MAX as u64,
+            "total vertex count {total} overflows u32 index"
+        );
+    }
+
+    #[test]
+    fn workgroup_count_covers_all_seeds() {
+        let workgroups = (N_SEEDS + 63) / 64;
+        assert!(workgroups * 64 >= N_SEEDS);
+    }
+
+    #[test]
+    fn workgroup_count_is_minimal() {
+        let workgroups = (N_SEEDS + 63) / 64;
+        assert!((workgroups - 1) * 64 < N_SEEDS);
+    }
+
+    #[test]
+    fn step_size_is_positive() {
+        assert!(STEP_SIZE > 0.0);
     }
 }
