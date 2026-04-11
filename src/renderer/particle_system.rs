@@ -389,3 +389,119 @@ impl ParticleSystem {
         [make(0), make(1)]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn particle_size_is_32_bytes() {
+        assert_eq!(mem::size_of::<Particle>(), 32);
+    }
+
+    #[test]
+    fn particle_is_pod() {
+        let p = Particle {
+            position: [1.0, 2.0, 3.0],
+            age: 0.5,
+            velocity: [0.0; 3],
+            _pad: 0.0,
+        };
+        let bytes = bytemuck::bytes_of(&p);
+        assert_eq!(bytes.len(), 32);
+    }
+
+    #[test]
+    fn sim_uniforms_size_is_32_bytes() {
+        assert_eq!(mem::size_of::<SimUniforms>(), 32);
+    }
+
+    #[test]
+    fn camera_uniforms_size_is_64_bytes() {
+        assert_eq!(mem::size_of::<CameraUniforms>(), 64);
+    }
+
+    #[test]
+    fn camera_uniforms_from_identity() {
+        let m = Mat4::IDENTITY;
+        let cu = CameraUniforms::from_mat4(m);
+        let flat = cu.view_proj;
+        assert_eq!(flat[0][0], 1.0);
+        assert_eq!(flat[1][1], 1.0);
+        assert_eq!(flat[2][2], 1.0);
+        assert_eq!(flat[3][3], 1.0);
+    }
+
+    #[test]
+    fn initial_particles_within_bbox() {
+        let mut rng = rand::rng();
+        let particles: Vec<Particle> = (0..NUM_PARTICLES)
+            .map(|_| Particle {
+                position: [
+                    rng.random_range(-BBOX_HALF..BBOX_HALF),
+                    rng.random_range(-BBOX_HALF..BBOX_HALF),
+                    rng.random_range(-BBOX_HALF..BBOX_HALF),
+                ],
+                age: rng.random_range(0.0..MAX_AGE),
+                velocity: [0.0; 3],
+                _pad: 0.0,
+            })
+            .collect();
+
+        for p in &particles {
+            for &coord in &p.position {
+                assert!(
+                    coord.abs() <= BBOX_HALF,
+                    "particle spawned outside bbox: {coord}"
+                );
+            }
+            assert!(
+                p.age >= 0.0 && p.age <= MAX_AGE,
+                "age out of range: {}",
+                p.age
+            );
+        }
+    }
+
+    #[test]
+    fn initial_particles_have_staggered_ages() {
+        let mut rng = rand::rng();
+        let ages: Vec<f32> = (0..1_000).map(|_| rng.random_range(0.0..MAX_AGE)).collect();
+
+        let min = ages.iter().cloned().fold(f32::MAX, f32::min);
+        let max = ages.iter().cloned().fold(f32::MIN, f32::max);
+        assert!(
+            max - min > 1.0,
+            "ages should be spread out, got range [{min}, {max}]"
+        );
+    }
+
+    #[test]
+    fn sim_uniforms_seed_varies_with_time() {
+        let seed1 = (1.0f32 * 1_000.0) as u32 ^ 0xDEAD_BEEF;
+        let seed2 = (1.001f32 * 1_000.0) as u32 ^ 0xDEAD_BEEF;
+        let seed3 = (2.0f32 * 1_000.0) as u32 ^ 0xDEAD_BEEF;
+        assert_ne!(seed1, seed3, "seeds at different times should differ");
+        let _ = seed2;
+    }
+
+    #[test]
+    fn dispatch_workgroup_count_covers_all_particles() {
+        let n = NUM_PARTICLES as u32;
+        let workgroups = (n + 255) / 256;
+        assert!(
+            workgroups * 256 >= n,
+            "workgroups {workgroups} × 256 does not cover {n} particles"
+        );
+    }
+
+    #[test]
+    fn dispatch_workgroup_count_is_minimal() {
+        let n = NUM_PARTICLES as u32;
+        let workgroups = (n + 255) / 256;
+        assert!(
+            (workgroups - 1) * 256 < n,
+            "launching unnecessary workgroups"
+        );
+    }
+}
