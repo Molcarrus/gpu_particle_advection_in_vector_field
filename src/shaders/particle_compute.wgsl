@@ -11,6 +11,7 @@ struct SimUniforms {
     max_age: f32,
     bbox_half: f32,
     seed: u32,
+    use_texture: u32,
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
@@ -20,7 +21,10 @@ struct SimUniforms {
 @group(0) @binding(1) var<storage, read> src: array<Particle>;
 @group(0) @binding(2) var<storage, read_write> dst: array<Particle>;
 
-fn field(p: vec3<f32>, t: f32) -> vec3<f32> {
+@group(0) @binding(3) var field_tex: texture_3d<f32>;
+@group(0) @binding(4) var field_smp: sampler;
+
+fn field_analytical(p: vec3<f32>, t: f32) -> vec3<f32> {
     let s = p * 0.15;
     
     let vx = sin(s.y + t * 0.31) + 0.4 * cos(s.z + t * 0.17);
@@ -28,6 +32,26 @@ fn field(p: vec3<f32>, t: f32) -> vec3<f32> {
     let vz = sin(s.x - s.y * 0.5 + t * 0.13) * 0.8;
     
     return vec3<f32>(vx, vy, vz);
+}
+
+const BBOX: f32 = 15.0;
+
+fn world_to_uvw(p: vec3<f32>) -> vec3<f32> {
+    return (p + vec3<f32>(BBOX)) / (2.0 * BBOX);
+}
+
+fn field_texture(p: vec3<f32>) -> vec3<f32> {
+    let uvw = world_to_uvw(p);
+    let sample = textureSample(field_tex, field_smp, uvw);
+    return sample.xyz;
+}
+
+fn field(p: vec3<f32>, t: f32) -> vec3<f32> {
+    if uniforms.use_texture == 1u {
+        return field_texture(p);
+    } else {
+        return field_analytical(p, t);
+    }
 }
 
 fn rk4(p: vec3<f32>, t: f32, dt: f32) -> vec3<f32> {

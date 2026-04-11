@@ -5,8 +5,8 @@ use glam::Mat4;
 use rand::RngExt;
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingType, BlendComponent, BlendFactor, BlendState, Buffer,
-    BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder,
+    BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent, BlendFactor, BlendState,
+    Buffer, BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder,
     CompareFunction, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
     DepthBiasState, DepthStencilState, Device, FragmentState, MultisampleState,
     PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPass, RenderPipeline,
@@ -14,7 +14,7 @@ use wgpu::{
     StencilState, TextureFormat, VertexState, wgt::BufferDescriptor,
 };
 
-use crate::renderer::ping_pong::PingPongBuffers;
+use crate::renderer::{field_texture::FieldTexture, ping_pong::PingPongBuffers};
 
 pub const NUM_PARTICLES: usize = 100_000;
 pub const MAX_AGE: f32 = 10.0;
@@ -37,7 +37,9 @@ pub struct SimUniforms {
     pub max_age: f32,
     pub bbox_half: f32,
     pub seed: u32,
-    pub _pad: [u32; 3],
+    pub use_texture: u32,
+    pub _pad1: u32,
+    pub _pad2: u32,
 }
 
 #[repr(C)]
@@ -64,10 +66,12 @@ pub struct ParticleSystem {
     render_pipeline: RenderPipeline,
     camera_bg: BindGroup,
     render_bgs: [BindGroup; 2],
+    pub field_texture: FieldTexture,
+    pub use_texture: bool,
 }
 
 impl ParticleSystem {
-    pub fn new(device: &Device, surface_format: TextureFormat) -> Self {
+    pub fn new(device: &Device, queue: &Queue, surface_format: TextureFormat) -> Self {
         let mut rng = rand::rng();
         let initial = (0..NUM_PARTICLES)
             .map(|_| Particle {
@@ -100,6 +104,8 @@ impl ParticleSystem {
             mapped_at_creation: false,
         });
 
+        let field_texture = FieldTexture::new(device, queue, 0.0);
+
         let compute_shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Particle Compute"),
             source: ShaderSource::Wgsl(include_str!("../shaders/particle_compute.wgsl").into()),
@@ -124,7 +130,7 @@ impl ParticleSystem {
         );
 
         let compute_bgs =
-            Self::make_compute_bind_groups(device, &compute_bgl, &sim_uniform_buf, &ping_pong);
+            Self::make_compute_bind_groups(device, &compute_bgl, &sim_uniform_buf, &ping_pong, &field_texture);
 
         let camera_bg = device.create_bind_group(&BindGroupDescriptor {
             label: Some("Camera BGL"),
@@ -147,7 +153,25 @@ impl ParticleSystem {
             render_pipeline,
             camera_bg,
             render_bgs,
+            field_texture,
+            use_texture: false,
         }
+    }
+
+    pub fn toggle_field_mode(&mut self) {
+        self.use_texture = !self.use_texture;
+        log::info!(
+            "Field mode: {}",
+            if self.use_texture {
+                "TEXTURE (trilinear)"
+            } else {
+                "ANALYTICAL"
+            }
+        );
+    }
+
+    pub fn refresh_field_textures(&mut self, queue: &Queue, time: f32) {
+        self.field_texture.upload(queue, time);
     }
 
     pub fn update(
@@ -168,7 +192,9 @@ impl ParticleSystem {
             max_age: MAX_AGE,
             bbox_half: BBOX_HALF,
             seed: (time * 1_000.0) as u32 ^ 0xDEAD_BEEF,
-            _pad: [0; 3],
+            use_texture: self.use_texture as u32,
+            _pad1: 0,
+            _pad2: 0,
         };
         queue.write_buffer(&self.sim_uniform_buf, 0, bytemuck::bytes_of(&sim));
 
@@ -221,6 +247,22 @@ impl ParticleSystem {
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
@@ -344,6 +386,7 @@ impl ParticleSystem {
         layout: &BindGroupLayout,
         uniforms: &Buffer,
         pp: &PingPongBuffers,
+        field_texture: &FieldTexture,
     ) -> [BindGroup; 2] {
         let make = |write_idx: usize| {
             let read_idx = 1 - write_idx;
@@ -362,6 +405,14 @@ impl ParticleSystem {
                     BindGroupEntry {
                         binding: 2,
                         resource: pp.buffers[write_idx].as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: BindingResource::TextureView(&field_texture.view),
+                    },
+                    BindGroupEntry {
+                        binding: 4,
+                        resource: BindingResource::Sampler(&field_texture.sampler),
                     },
                 ],
             })
@@ -434,6 +485,17 @@ mod tests {
         assert_eq!(flat[1][1], 1.0);
         assert_eq!(flat[2][2], 1.0);
         assert_eq!(flat[3][3], 1.0);
+    }
+
+    #[test]
+    fn use_texture_flag_fits_in_u32() {
+        assert_eq!(false as u32, 0u32);
+        assert_eq!(true as u32, 1u32);
+    }
+
+    #[test]
+    fn sim_uniforms_use_texture_at_correct_offset() {
+        assert_eq!(mem::size_of::<SimUniforms>(), 32);
     }
 
     #[test]
