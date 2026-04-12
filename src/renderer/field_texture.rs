@@ -91,7 +91,7 @@ impl FieldTexture {
                     let pz = (z as f32 / res as f32) * 2.0 * bbox - bbox;
 
                     let sx = px * 0.15;
-                    let sy = px * 0.15;
+                    let sy = py * 0.15;
                     let sz = pz * 0.15;
 
                     let vx = (sy * time * 0.31).sin() + 0.4 * (sz + time * 0.17).cos();
