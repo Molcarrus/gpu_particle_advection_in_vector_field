@@ -20,15 +20,15 @@ cargo run --release
 
 ## What you're looking at
 
-Particles are colored points. There are 100,000 of them. Each one is colored by how fast its moving through the field (blue means slow, cyan/yellow means medium, red means fast). They fade out as they get older. When a particles hits the boundary of the simulation volume or reaches its maximum age, it respawns at a random position.
+There are 100,000 colored particles moving through the field. The color shows their speed — blue is slow, cyan and yellow are medium, red is fast. They fade out as they get older, and when they hit the edge of the volume or reach their max age they just respawn at a random spot.
 
-Streamlines are the glowing lines threading through the particle cloud. Each one starts at a fixed seed point and traces forward through the field for 256 steps. They're colored purple at the seed end and fade throguh teal toward orange at the tail. Press `S` to hide them if you want to see just the particles.
+The glowing lines that weave through the particle cloud are streamlines. Each one starts at a fixed seed point and traces forward for 256 steps. They go from purple at the start to teal and then orange at the end. Hit S if they feel too busy and you just want to see the particles.
 
-Both layers use additive blending, so areas where many particles or lines overlap glow brighter. This makes the regions of high flow density naturally stand out.
+I used additive blending for both the particles and the streamlines, so places where a lot of them overlap glow brighter. It makes the high-flow regions stand out naturally.
 
 ## The vector field
 
-The field is defined analytically, no external data is loaded. The formula is:
+I defined the field analytically in the shader.
 ```wgsl
 fn field_analytical(p: vec3<f32>, t: f32) -> vec3<f32> {
     let s = p * 0.15;
@@ -40,11 +40,11 @@ fn field_analytical(p: vec3<f32>, t: f32) -> vec3<f32> {
     return vec3<f32>(vx, vy, vz);
 }
 ```
-The time coefficients (`0.31`, `0.23`, `0.13`, etc.) are chosen to be irrational relative to each other so the field never exactly repeats. The cross-axis terms (`sin(s.y)` driving the X-component, etc.) create swirling behaviour rather than straight flow lines.
+I picked the time coefficients so they’re irrational relative to each other and the pattern never repeats exactly. The cross terms (like `sin(s.y`) affecting the `x` velocity) create the nice swirling motion instead of straight lines.
 
 ## Integration
 
-Each particle is adevcted using a 4rth-order Runge-Kutta (RK4) step every frame. RK4 evaluated field at four points per step and combines them with Simpson's-rule weighting:
+I advect each particle every frame using fourth-order Runge-Kutta (RK4):
 ```wgsl
 fn rk4(p: vec3<f32>, t: f32, dt: f32) -> vec3<f32> {
     let k1 = field(p, t);
@@ -55,36 +55,33 @@ fn rk4(p: vec3<f32>, t: f32, dt: f32) -> vec3<f32> {
     return p + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * (dt / 6.0);
 }
 ```
-This is more expensive than Euler integration (4 field evaluations instead of 1) but significantly more accurate, which matters when particles need to follow curved field lines faithfully over many steps without drifting.
-Streamlines use the same RK4 integrator but hold time fixed during tracing, they show the field frozen at the current instant rather than following a particle through time.
+It’s more work than simple Euler (four field lookups instead of one), but the extra accuracy really matters so the particles follow the curved flow lines properly over time without drifting. The streamlines use the same RK4 code but with time frozen so they show the field at the current moment.
 
 ## Ping-pong buffer architecture
 
-This was one of the trickier things to get right. The core problem is that a compute shader cannot safely read and write the same buffer in one dispatch. If the GPU processes particles 8000 before particle 7999, and particle 8000's new position was written before particle 7999 read it, the result depends on the execution order, which the GPU does not guarantee.
-The solution is two identically-sized buffers, A and B, that alternate roles each frame:
+This part was one of the trickier things to get right. A compute shader can’t safely read from and write to the same buffer in one dispatch because the GPU doesn’t guarantee execution order. If particle 8000 writes its new position before particle 7999 reads the old one, you get random glitches.
+
+I solved it with two identical buffers, A and B, that swap every frame:
 ```
 Frame 0: read A -> compute -> write B -> render B
 Frame 1: read B -> compute -> write A -> render A
 Frame 2: read A -> compute -> write B -> render B
 ```
-Every particle always reads from last frame's clean state and writes to a separate buffer. There is no aliasing possible.
-The implementation builds two bind groups at startup, one for each direction, and selects between them with a single XOR each frame:
+Each particle always reads the clean previous-frame data and writes to the other buffer. I create the two bind groups once at startup and just flip between them with a single XOR:
 ```rust
 self.ping_pong.current ^= 1;
 cpass.set_bind_group(0, &self.compute_bgs[self.pin_pong.current], &[]);
 ```
-No per-frame allocation. The render pass always reads from whichever buffer was just written, so it always sees the freshest positions.
+No per-frame allocations, and the render pass always sees the freshest positions.
 
 ## 3D texture acceleration structure
 
-By default the field i sevaluated analytically in the shader. Press `T` to switch to texture-based lookup.
+By default the field is evaluated analytically. Press `T` to switch to a 64×64×64 `Rgba16Float` 3D texture lookup instead.
 
-The idea is straightforward: instead of computing 16 trig functions per particle per frame, pre-sample the field into a 64x64x64 `Rgba16Float` 3D texture and let the GPU's texture hardware do the application.
+It turns 16 trig calls per particle into one `textureSampleLevel` and lets the GPU do the trilinear interpolation for free. The texture is only 2 MB.
 
-Each lookup becomes a single `textureSampleLevel` call. The GPU performs trilinear interpolation across the 8 surrounding texels automatically, no manual lerp code needed. The texture takes 2MB of VRAM.
+One thing I ran into: `textureSample` doesn’t work in compute shaders because it needs screen-space derivatives that only exist in fragment shaders. So I use `textureSampleLevel(..., 0.0)` with an explicit mip level.
 
-One thing that caught me during implementation: `textureSample` is not legal in a compute shader. It relies on implicit scree-space derivatives (`dpdx`/`dpdy`) to select a mip leel, and those derivatives only exist inside fragment shader invocations where adjacent pixels are being processed in parallel. In a compute shader there is no such context. The fix is `textureSampleLevel` which takes an explicit mip level argument (passing `0.0` since the texture only has one mip anyway).
+I refresh the texture from the CPU every 0.5 seconds. Updating every frame would be 120 MB/s of bandwidth for basically no gain, so this felt like the right tradeoff. The tiny lag is only noticeable when you toggle `T` back and forth, and the `f16` format adds about 0.1 % error which you can’t see.
 
-The texture is re-uploaded from the CPU every 0.5 seconds to stay roughly in sync with the animated field. This cadence is a deliberate tradeoff, uploadinf every frame would cost 2MB of CPU->GPU bandwidth at 60fps (120MB/s just for the field), which is wasteful when the field changes slowly. At 0.5s intervals the texture is slightly behind the analytical field, which you can actually see if you switch between modes with `T` while watching closely.
-
-The `f16` format introduces about 0.1% relative error compared tot eh `f32` analytical evaluation. In practice this is invisible, the particles follow the same flow patterns in both modes.
+That’s the project! I had a lot of fun building it and learning these GPU patterns. 
