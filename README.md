@@ -20,9 +20,9 @@ cargo run --release
 
 ## What you're looking at
 
-There are 100,000 colored particles moving through the field. The color shows their speed — blue is slow, cyan and yellow are medium, red is fast. They fade out as they get older, and when they hit the edge of the volume or reach their max age they just respawn at a random spot.
+There are 100,000 colored particles moving through the field. The color shows their speed: blue is slow, cyan and yellow are medium, red is fast. They fade out as they get older, and when they hit the edge of the volume or reach their max age they just respawn at a random spot.
 
-The glowing lines that weave through the particle cloud are streamlines. Each one starts at a fixed seed point and traces forward for 256 steps. They go from purple at the start to teal and then orange at the end. Hit S if they feel too busy and you just want to see the particles.
+The glowing lines that weave through the particle cloud are streamlines. Each one starts at a fixed seed point and traces forward for 256 steps. They go from purple at the start to teal and then orange at the end. Hit `S` if you want to turn off the streamlines.
 
 I used additive blending for both the particles and the streamlines, so places where a lot of them overlap glow brighter. It makes the high-flow regions stand out naturally.
 
